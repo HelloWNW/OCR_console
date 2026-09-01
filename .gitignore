@@ -1,0 +1,20 @@
+# dependencies / build output
+node_modules/
+dist/
+*.egg-info/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# never commit real secrets, even if something goes off-script locally
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# OS cruft
+.DS_Store

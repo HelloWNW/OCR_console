@@ -1,0 +1,20 @@
+# Install at C:\Caddy\Caddyfile on wserver. Requires a Caddy build with the
+# Cloudflare DNS module — see the runbook (README.md) for the exact download.
+#
+# DNS-01 challenge via the Cloudflare API token means Caddy never needs
+# inbound port 80 open for cert issuance — but the actual HTTPS traffic to
+# api.hello-wnw.org still needs inbound TCP 443 reaching this machine
+# (router port-forward to wserver's LAN IP, or proxy through Cloudflare's
+# edge with a tunnel/orange-cloud setup). Confirm that's in place before
+# relying on this.
+
+{
+	email hello.awholenewworld@gmail.com
+}
+
+api.hello-wnw.org {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:8000
+}
