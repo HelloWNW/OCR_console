@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelJob,
   downloadUrl,
+  fetchJobResult,
   getQueue,
   pauseQueue,
   QueueItem,
@@ -29,6 +30,8 @@ export default function App() {
   const [cameraError, setCameraError] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
+  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [resultError, setResultError] = useState(false);
 
   const refreshQueue = useCallback(async () => {
     try {
@@ -84,6 +87,35 @@ export default function App() {
     thumbs.current[job.job_id] = url;
     refreshQueue();
   }
+
+  // Fetch the actual processed result for the open dialog - the queue-strip
+  // thumbnail is the local input photo (cheap, instant), but the dialog
+  // should show what the model actually produced.
+  useEffect(() => {
+    if (!activeResultId) {
+      setResultUrl(null);
+      setResultError(false);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setResultUrl(null);
+    setResultError(false);
+    fetchJobResult(sessionId, activeResultId)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setResultUrl(url);
+      })
+      .catch(() => !cancelled && setResultError(true));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [activeResultId]);
 
   function rotateFlip() {
     setRotation((r) => (r + 90) % 360);
@@ -165,7 +197,7 @@ export default function App() {
               </div>
             )}
             <div className="camera-controls">
-              <button className="btn-icon flip-btn" onClick={rotateFlip} aria-label="Rotate 90°">
+              <button className="btn-icon flip-btn" onClick={rotateFlip} aria-label="Rotate 90ï¿½">
                 <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M3 12a9 9 0 1 1 2.6 6.4" /><path d="M3 21v-5h5" />
                 </svg>
@@ -188,7 +220,7 @@ export default function App() {
       )}
 
       <section className="queue-strip">
-        <h2>Queue · {queue.length} item{queue.length === 1 ? "" : "s"}</h2>
+        <h2>Queue ï¿½ {queue.length} item{queue.length === 1 ? "" : "s"}</h2>
         <div className="strip">
           {queue.length === 0 && <p className="empty-hint">No photos yet.</p>}
           {queue.map((j) => {
@@ -220,7 +252,7 @@ export default function App() {
                         cancelJob(sessionId, j.job_id).then(refreshQueue);
                       }}
                     >
-                      ×
+                      ï¿½
                     </button>
                   )}
                 </div>
@@ -253,7 +285,13 @@ export default function App() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg>
               </button>
             </div>
-            <img src={thumbs.current[activeItem.job_id]} alt="" className="dialog-image" />
+            {resultUrl ? (
+              <img src={resultUrl} alt="" className="dialog-image" />
+            ) : resultError ? (
+              <p className="empty-hint">Could not load the result.</p>
+            ) : (
+              <p className="empty-hint">Loading resultâ€¦</p>
+            )}
           </div>
         </div>
       )}

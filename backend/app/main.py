@@ -35,11 +35,12 @@ async def _startup():
     queue.start()
 
 
-def _check_key(x_api_key: Optional[str]):
-    # Defense in depth behind Cloudflare Access — the frontend/Caddy also
+def _check_key(x_api_key: Optional[str], query_key: Optional[str] = None):
+    # Defense in depth behind Cloudflare Access — the frontend/Access also
     # gate access at the edge, this catches anything that reaches the
-    # container directly.
-    if API_KEY and x_api_key != API_KEY:
+    # container directly. query_key exists only for the plain <a href>
+    # download link, which can't set a custom header.
+    if API_KEY and API_KEY not in (x_api_key, query_key):
         raise HTTPException(status_code=401, detail="invalid API key")
 
 
@@ -83,9 +84,25 @@ async def resume_queue(x_api_key: Optional[str] = Header(None)):
     return {"paused": False}
 
 
-@app.get("/sessions/{session_id}/download")
-async def download_session(session_id: str, format: str = "png", x_api_key: Optional[str] = Header(None)):
+@app.get("/sessions/{session_id}/jobs/{job_id}/result")
+async def job_result(session_id: str, job_id: str, x_api_key: Optional[str] = Header(None)):
     _check_key(x_api_key)
+    job = queue.jobs.get(job_id)
+    if not job or job.session_id != session_id:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status != JobStatus.DONE:
+        raise HTTPException(status_code=409, detail=f"job is {job.status}, not done")
+    return Response(content=job.result_png, media_type="image/png")
+
+
+@app.get("/sessions/{session_id}/download")
+async def download_session(
+    session_id: str,
+    format: str = "png",
+    key: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+):
+    _check_key(x_api_key, key)
     if format not in ("png", "pdf"):
         raise HTTPException(status_code=400, detail="format must be 'png' or 'pdf'")
 
