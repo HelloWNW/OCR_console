@@ -14,6 +14,32 @@ WORKDIR /opt/dvd
 RUN git clone --depth 1 https://github.com/hanquansanren/DvD.git repo
 WORKDIR /opt/dvd/repo
 
+# Upstream bug fix: train_settings/dvd/improved_diffusion/cross_model.py's
+# `iter is True or tv is True` branch (our active code path - our settings
+# always run with time_variant=True) references `block` without ever
+# assigning it, because the `for block in self.blocks:` loop above it is
+# commented out. The two sibling branches in the same if/elif/else both
+# still have their loop intact, confirming this is a leftover debug comment,
+# not deliberate. Confirmed live: this crashes every real inference request
+# with "local variable 'block' referenced before assignment" until patched.
+# Restoring the loop to match the working sibling branches.
+RUN python3 - <<'PY'
+path = "train_settings/dvd/improved_diffusion/cross_model.py"
+src = open(path).read()
+old = (
+    "        if iter is True or tv is True: # true\n"
+    "            # for block in self.blocks:\n"
+    "            x4, x3, x2, x1  = block(x, t, tv, cond, msk6, msk_line, r)"
+)
+new = (
+    "        if iter is True or tv is True: # true\n"
+    "            for block in self.blocks:\n"
+    "                x4, x3, x2, x1  = block(x, t, tv, cond, msk6, msk_line, r)"
+)
+assert old in src, "upstream cross_model.py no longer matches the expected buggy snippet - re-check the patch"
+open(path, "w").write(src.replace(old, new))
+PY
+
 RUN pip install --no-cache-dir torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cu118 \
  && pip install --no-cache-dir mmcv==2.2.0 -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.1/index.html \
  && pip install --no-cache-dir -r requirements.txt
