@@ -12,6 +12,7 @@ called on first inference, and releases it again after IDLE_TIMEOUT_SECONDS
 of inactivity via a background watchdog thread.
 """
 import io
+import os
 import threading
 import time
 from typing import Optional
@@ -202,6 +203,13 @@ class DvDEngine:
     @staticmethod
     def _run(input_image_ori, settings, model, diffusion,
               pretrained_dewarp_model, pretrained_line_seg_model, pretrained_seg_model):
+        # diffusion.ddim_sample_loop's iterative-refinement branch (the repo's
+        # default 'iter' mode) unconditionally saves a per-step debug PNG to
+        # this hardcoded relative path - confirmed by a live failure after an
+        # otherwise fully successful run. settings.env.visualize does NOT
+        # gate this call (verified against the actual library source), so the
+        # correct fix is just making sure the directory exists.
+        os.makedirs("vis_hp/debug_vis", exist_ok=True)
         cv.setNumThreads(0)
         input_image_ori = np.array(input_image_ori, dtype=np.uint8)
         input_image_resized = cv.resize(input_image_ori, (512, 512))
