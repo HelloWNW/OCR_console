@@ -1,8 +1,10 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://api.hello-wnw.org";
-// Defense-in-depth behind Cloudflare Access, checked by the backend's
-// _check_key(). Baking it into the public bundle is fine here since Access
-// already gates network access to the API host - this just stops requests
-// that reach the origin some other way.
+// The API's actual gate - checked by the backend's _check_key(). Cloudflare
+// Access only guards the frontend page load, not this API host, since an
+// Access app in front of the API broke every browser fetch() (its redirect
+// to the login page can't be followed by JS, and credentialed cross-origin
+// fetches to it are blocked by CORS unless the server opts in, which this
+// API deliberately doesn't - it isn't cookie-authenticated).
 const API_KEY = import.meta.env.VITE_DVD_API_KEY ?? "";
 
 export type JobStatus = "queued" | "processing" | "done" | "error" | "canceled";
@@ -25,7 +27,6 @@ export async function submitJob(sessionId: string, file: File | Blob, filename: 
     method: "POST",
     body: form,
     headers: authHeaders(),
-    credentials: "include", // carries the Cloudflare Access session cookie
   });
   if (!res.ok) throw new Error(`upload failed: ${res.status}`);
   return (await res.json()) as { job_id: string; status: JobStatus };
@@ -34,7 +35,6 @@ export async function submitJob(sessionId: string, file: File | Blob, filename: 
 export async function getQueue(sessionId: string): Promise<QueueItem[]> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/queue`, {
     headers: authHeaders(),
-    credentials: "include",
   });
   if (!res.ok) throw new Error(`queue fetch failed: ${res.status}`);
   return res.json();
@@ -44,16 +44,15 @@ export async function cancelJob(sessionId: string, jobId: string) {
   await fetch(`${API_BASE}/sessions/${sessionId}/jobs/${jobId}/cancel`, {
     method: "POST",
     headers: authHeaders(),
-    credentials: "include",
   });
 }
 
 export async function pauseQueue() {
-  await fetch(`${API_BASE}/queue/pause`, { method: "POST", headers: authHeaders(), credentials: "include" });
+  await fetch(`${API_BASE}/queue/pause`, { method: "POST", headers: authHeaders() });
 }
 
 export async function resumeQueue() {
-  await fetch(`${API_BASE}/queue/resume`, { method: "POST", headers: authHeaders(), credentials: "include" });
+  await fetch(`${API_BASE}/queue/resume`, { method: "POST", headers: authHeaders() });
 }
 
 // Plain <a href> can't set custom headers, so the download link falls back
@@ -70,7 +69,6 @@ export function downloadUrl(sessionId: string, format: "png" | "pdf") {
 export async function fetchJobResult(sessionId: string, jobId: string): Promise<string> {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/jobs/${jobId}/result`, {
     headers: authHeaders(),
-    credentials: "include",
   });
   if (!res.ok) throw new Error(`result fetch failed: ${res.status}`);
   const blob = await res.blob();
