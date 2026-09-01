@@ -19,6 +19,17 @@ everything gated by free Cloudflare Access.
   wasn't installed in Ubuntu-24.04 (GPU passthrough failed until step 1);
   nothing booted that WSL distro at Windows startup without a login (fixed
   by step 2's Task Scheduler entry).
+- **GPU isolation under WSL2**: Docker's own `--gpus device=1` flag does
+  *not* restrict which GPU a container can see here — verified live,
+  `device=0` and `device=1` both exposed both GPUs identically (a WSL2
+  GPU-passthrough limitation, not a config mistake). The actual restriction
+  to GPU 1 happens at the application level via `CUDA_VISIBLE_DEVICES=1`
+  (set in step 3's run command) — confirmed working with a real PyTorch
+  container: `torch.cuda.device_count()` reports 1 and
+  `torch.cuda.get_device_name(0)` correctly reports the GTX 1080 Ti. This is
+  a convention CUDA-aware code honors, not an OS-level security boundary —
+  fine for our own trusted model code, worth knowing if anything else ever
+  runs in this container.
 
 ## Order of operations
 
@@ -32,9 +43,10 @@ everything gated by free Cloudflare Access.
 3. Copy this whole repo to `C:\Docker\OCR_console` on wserver (`scp -r` or
    your own method), then **`deploy/wserver/03-build-and-run.sh`** — run
    inside Ubuntu-24.04 with `DVD_API_KEY` exported. Builds the image, runs
-   the `OCR` container (name = hostname = `OCR`, `--gpus device=1`,
-   `--restart unless-stopped`, bound to `127.0.0.1:8000` only). GPU stays
-   empty until the first real inference request; idles back down after
+   the `OCR` container (name = hostname = `OCR`, `--gpus all` +
+   `CUDA_VISIBLE_DEVICES=1` to pin it to GPU 1 specifically, `--restart
+   unless-stopped`, bound to `127.0.0.1:8000` only). GPU stays empty until
+   the first real inference request; idles back down after
    `DVD_IDLE_TIMEOUT_SECONDS` (default 600s) of inactivity.
 4. **Manual — Caddy binary**: download a Caddy build with the Cloudflare DNS
    module from https://caddyserver.com/download (tick

@@ -18,7 +18,8 @@ docker rm -f OCR 2>/dev/null || true
 docker run -d \
   --name OCR \
   --hostname OCR \
-  --gpus 'device=1' \
+  --gpus all \
+  -e CUDA_VISIBLE_DEVICES=1 \
   --restart unless-stopped \
   -p 127.0.0.1:8000:8000 \
   -v ocr-checkpoints:/opt/dvd/repo/checkpoints \
