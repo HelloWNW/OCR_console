@@ -115,9 +115,14 @@ class DvDEngine:
         _stage("after create_model_and_diffusion (diffusion U-Net on GPU)")
 
         pretrained_dewarp_model = GeoTr_Seg_Inf()
+        _stage("GeoTr_Seg_Inf() constructed on CPU")
         seg_model_path = hf_hub_download(repo_id=_REPO_ID, filename="seg.pth", token=self.hf_token)
+        _stage("seg.pth downloaded")
         reload_segmodel(pretrained_dewarp_model.msk, seg_model_path)
-        pretrained_dewarp_model.to("cuda").eval()
+        _stage("seg.pth state dict loaded into .msk (still CPU)")
+        pretrained_dewarp_model.to("cuda")
+        _stage("pretrained_dewarp_model.to('cuda') done")
+        pretrained_dewarp_model.eval()
         _stage("after pretrained_dewarp_model (GeoTr_Seg_Inf) to cuda")
 
         pretrained_line_seg_model = None
