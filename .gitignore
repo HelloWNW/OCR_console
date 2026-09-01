@@ -18,3 +18,6 @@ secrets/
 
 # OS cruft
 .DS_Store
+
+# personal test photos - never commit these
+/test/
