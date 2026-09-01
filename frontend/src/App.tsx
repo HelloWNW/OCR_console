@@ -182,6 +182,7 @@ export default function App() {
         <div className="brand">
           <h1>OCR Console</h1>
           <span className="subtitle">Document dewarping</span>
+          <span className="version">v{__APP_VERSION__}</span>
         </div>
         <div className="mode-switch">
           <button className={mode === "upload" ? "active" : ""} onClick={() => setMode("upload")}>

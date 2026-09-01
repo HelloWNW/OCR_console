@@ -71,6 +71,14 @@ body {
   text-overflow: ellipsis;
 }
 
+.version {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
 .mode-switch,
 .format-switch {
   flex: 0 0 auto;
