@@ -47,6 +47,32 @@ export async function cancelJob(sessionId: string, jobId: string) {
   });
 }
 
+// Pulls a still-queued job out entirely (for retaking), returning the index
+// it held so a replacement can be reinserted at the same spot with moveJob.
+export async function removeQueuedJob(sessionId: string, jobId: string): Promise<number> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/jobs/${jobId}/remove`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`remove failed: ${res.status}`);
+  const data = (await res.json()) as { index: number };
+  return data.index;
+}
+
+export async function moveJob(sessionId: string, jobId: string, toIndex: number) {
+  await fetch(`${API_BASE}/sessions/${sessionId}/jobs/${jobId}/move?to_index=${toIndex}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+}
+
+export async function clearQueue(sessionId: string) {
+  await fetch(`${API_BASE}/sessions/${sessionId}/clear`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+}
+
 export async function pauseQueue() {
   await fetch(`${API_BASE}/queue/pause`, { method: "POST", headers: authHeaders() });
 }

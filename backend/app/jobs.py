@@ -64,6 +64,47 @@ class JobQueue:
             return True
         return False
 
+    def remove(self, session_id: str, job_id: str) -> Optional[int]:
+        """Pull a not-yet-started job out of its session entirely, for
+        retaking. Returns the index it was removed from (so the caller can
+        reinsert a replacement at the same spot), or None if the job isn't
+        queued anymore - already processing/done can't be safely un-submitted.
+        """
+        job = self.jobs.get(job_id)
+        if not job or job.session_id != session_id or job.status != JobStatus.QUEUED:
+            return None
+        ids = self.sessions.get(session_id, [])
+        if job_id not in ids:
+            return None
+        index = ids.index(job_id)
+        ids.pop(index)
+        job.status = JobStatus.CANCELED
+        del self.jobs[job_id]
+        return index
+
+    def move(self, session_id: str, job_id: str, to_index: int) -> bool:
+        """Reposition a job within its session's display/output order."""
+        ids = self.sessions.get(session_id)
+        if not ids or job_id not in ids:
+            return False
+        ids.remove(job_id)
+        ids.insert(max(0, min(to_index, len(ids))), job_id)
+        return True
+
+    def clear(self, session_id: str) -> None:
+        """Drop every job for a session except one still mid-inference,
+        which can't be safely aborted - it just disappears once it finishes.
+        """
+        ids = self.sessions.get(session_id, [])
+        keep = []
+        for jid in ids:
+            job = self.jobs.get(jid)
+            if job and job.status == JobStatus.PROCESSING:
+                keep.append(jid)
+            elif job:
+                del self.jobs[jid]
+        self.sessions[session_id] = keep
+
     def pause(self):
         self._paused.clear()
 

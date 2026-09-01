@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelJob,
+  clearQueue,
   downloadUrl,
   fetchJobResult,
   getQueue,
+  moveJob,
   pauseQueue,
   QueueItem,
+  removeQueuedJob,
   resumeQueue,
   submitJob,
 } from "./lib/api";
@@ -21,6 +24,14 @@ export default function App() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [paused, setPaused] = useState(false);
   const thumbs = useRef<Record<string, string>>({});
+  // Raw Blobs behind each thumb, kept alongside the object-URL versions so a
+  // queued photo can be pulled back out and resubmitted later (retake).
+  const blobs = useRef<Record<string, Blob>>({});
+  // Job ids whose result image has already been fetched to replace the
+  // input-photo thumbnail, so the swap only happens once per job.
+  const resultApplied = useRef<Set<string>>(new Set());
+  const [useNumbering, setUseNumbering] = useState(false);
+  const numberCounter = useRef(1);
 
   // camera mode state
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -30,15 +41,35 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   // The most recently captured shot, tracked separately from React state so
   // a fast second capture can't race the first one's submit in flight.
-  const pendingCapture = useRef<{ blob: Blob; filename: string } | null>(null);
+  // reinsertIndex is set only when this capture came from retaking a queued
+  // photo, so it can go back to the same spot instead of the end of the line.
+  const pendingCapture = useRef<{ blob: Blob; filename: string; reinsertIndex?: number } | null>(null);
   const [queueStatus, setQueueStatus] = useState<"idle" | "queuing" | "queued" | "error">("idle");
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultError, setResultError] = useState(false);
 
+  function nextFilename(defaultName: string, ext: string): string {
+    if (!useNumbering) return defaultName;
+    return `${String(numberCounter.current++).padStart(5, "0")}.${ext}`;
+  }
+
   const refreshQueue = useCallback(async () => {
     try {
-      setQueue(await getQueue(sessionId));
+      const items = await getQueue(sessionId);
+      setQueue(items);
+      for (const item of items) {
+        if (item.status !== "done" || resultApplied.current.has(item.job_id)) continue;
+        resultApplied.current.add(item.job_id);
+        fetchJobResult(sessionId, item.job_id)
+          .then((url) => {
+            const old = thumbs.current[item.job_id];
+            thumbs.current[item.job_id] = url;
+            if (old) URL.revokeObjectURL(old);
+            setQueue((q) => [...q]); // re-render to pick up the swapped thumb
+          })
+          .catch(() => resultApplied.current.delete(item.job_id)); // retry next poll
+      }
     } catch {
       // transient network hiccup - next poll will retry
     }
@@ -72,11 +103,15 @@ export default function App() {
     };
   }, [mode]);
 
-  // Takes a shot and queues it immediately; the shutter stays available for
-  // the next shot. Uses a fresh canvas per capture (not a shared ref) so a
-  // fast second shot can't clear the first one's pixels out from under it -
-  // setting canvas.width/height resets its contents synchronously, so two
-  // overlapping captures sharing one canvas could otherwise both end up
+  // Takes a shot. It sits in preview only - not queued yet - so the shooter
+  // can review it before committing. If a previous shot is still sitting in
+  // preview when a new one is taken, that older one is queued now (its
+  // review window is over) before the new shot takes its place; the "Queue"
+  // button covers the single-shot case where there's no next photo to
+  // trigger that handoff. Uses a fresh canvas per capture (not a shared ref)
+  // so a fast second shot can't clear the first one's pixels out from under
+  // it - setting canvas.width/height resets its contents synchronously, so
+  // two overlapping captures sharing one canvas could otherwise both end up
   // reading the second frame, or lose the first entirely.
   async function takePhoto() {
     const video = videoRef.current;
@@ -88,18 +123,22 @@ export default function App() {
     const blob: Blob = await new Promise((resolve) =>
       canvas.toBlob((b) => resolve(b!), "image/png")
     );
+
+    if (pendingCapture.current) {
+      await queueCurrentCapture();
+    }
+
     const url = URL.createObjectURL(blob);
     setPreviewUrl(url);
-    const filename = `capture-${Date.now()}.png`;
+    const filename = nextFilename(`capture-${Date.now()}.png`, "png");
     pendingCapture.current = { blob, filename };
     setQueueStatus("idle");
-    await queueCurrentCapture();
   }
 
-  // Submits whatever's currently in pendingCapture. Called automatically
-  // right after each shot, and also exposed as the "Queue" button so a
-  // failed or skipped auto-submit (or a deliberate single-shot workflow)
-  // always has an explicit, visible way to actually get the photo queued.
+  // Submits whatever's currently in pendingCapture: automatically when the
+  // next shot bumps it out of preview, and also exposed as the "Queue"
+  // button for the last shot of a session (or a retry after a failed
+  // submit), which has no next photo to trigger that handoff.
   async function queueCurrentCapture() {
     const capture = pendingCapture.current;
     if (!capture) return;
@@ -107,11 +146,35 @@ export default function App() {
     try {
       const job = await submitJob(sessionId, capture.blob, capture.filename);
       thumbs.current[job.job_id] = URL.createObjectURL(capture.blob);
+      blobs.current[job.job_id] = capture.blob;
+      if (capture.reinsertIndex !== undefined) {
+        await moveJob(sessionId, job.job_id, capture.reinsertIndex);
+      }
       pendingCapture.current = null;
       setQueueStatus("queued");
       refreshQueue();
     } catch {
       setQueueStatus("error");
+    }
+  }
+
+  // Pulls a still-queued photo back out to retake it, replacing whatever's
+  // currently in preview (which is dropped, not auto-queued - the point of
+  // this action is to redo that queued shot instead). Remembers its queue
+  // position so the retaken shot goes back to the same spot, not the end.
+  async function retakeFromQueue(jobId: string, filename: string) {
+    try {
+      const index = await removeQueuedJob(sessionId, jobId);
+      const blob = blobs.current[jobId];
+      if (blob) {
+        setPreviewUrl(URL.createObjectURL(blob));
+        pendingCapture.current = { blob, filename, reinsertIndex: index };
+        setQueueStatus("idle");
+      }
+      delete thumbs.current[jobId];
+      delete blobs.current[jobId];
+    } finally {
+      refreshQueue();
     }
   }
 
@@ -151,8 +214,11 @@ export default function App() {
   async function onBulkFiles(files: FileList | null) {
     if (!files) return;
     for (const file of Array.from(files)) {
-      const job = await submitJob(sessionId, file, file.name);
+      const ext = file.name.split(".").pop() || "png";
+      const filename = nextFilename(file.name, ext);
+      const job = await submitJob(sessionId, file, filename);
       thumbs.current[job.job_id] = URL.createObjectURL(file);
+      blobs.current[job.job_id] = file;
     }
     refreshQueue();
   }
@@ -170,6 +236,17 @@ export default function App() {
     await Promise.all(
       queue.filter((j) => j.status === "queued").map((j) => cancelJob(sessionId, j.job_id))
     );
+    refreshQueue();
+  }
+
+  async function clearAll() {
+    if (!confirm("Clear the entire queue? This can't be undone.")) return;
+    await clearQueue(sessionId);
+    for (const url of Object.values(thumbs.current)) URL.revokeObjectURL(url);
+    thumbs.current = {};
+    blobs.current = {};
+    resultApplied.current.clear();
+    numberCounter.current = 1;
     refreshQueue();
   }
 
@@ -259,18 +336,37 @@ export default function App() {
       )}
 
       <section className="queue-strip">
-        <h2>Queue � {queue.length} item{queue.length === 1 ? "" : "s"}</h2>
+        <div className="queue-strip-header">
+          <h2>Queue - {queue.length} item{queue.length === 1 ? "" : "s"}</h2>
+          <div className="queue-strip-actions">
+            <button
+              className={`btn-pill ${useNumbering ? "active" : ""}`}
+              onClick={() => setUseNumbering((v) => !v)}
+              title="Name new photos 00001, 00002, ... instead of their original names"
+            >
+              00001 naming {useNumbering ? "on" : "off"}
+            </button>
+            <button className="btn-pill danger" onClick={clearAll} disabled={queue.length === 0}>
+              Clear
+            </button>
+          </div>
+        </div>
         <div className="strip">
           {queue.length === 0 && <p className="empty-hint">No photos yet.</p>}
           {queue.map((j) => {
             const thumb = thumbs.current[j.job_id];
             const openable = j.status === "done" && !!thumb;
+            const retakeable = mode === "camera" && j.status === "queued";
             return (
               <div
                 key={j.job_id}
-                className={`queue-item status-${j.status}`}
-                onClick={() => openable && setActiveResultId(j.job_id)}
-                style={{ cursor: openable ? "pointer" : "default" }}
+                className={`queue-item status-${j.status} ${retakeable ? "retakeable" : ""}`}
+                onClick={() => {
+                  if (openable) setActiveResultId(j.job_id);
+                  else if (retakeable) retakeFromQueue(j.job_id, j.filename);
+                }}
+                style={{ cursor: openable || retakeable ? "pointer" : "default" }}
+                title={retakeable ? "Tap to retake this photo" : undefined}
               >
                 <div className="thumb">
                   {thumb ? (
@@ -291,7 +387,7 @@ export default function App() {
                         cancelJob(sessionId, j.job_id).then(refreshQueue);
                       }}
                     >
-                      �
+                      ×
                     </button>
                   )}
                 </div>

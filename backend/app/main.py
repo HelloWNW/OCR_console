@@ -70,6 +70,31 @@ async def cancel_job(session_id: str, job_id: str, x_api_key: Optional[str] = He
     return {"status": "canceled"}
 
 
+@app.post("/sessions/{session_id}/jobs/{job_id}/remove")
+async def remove_job(session_id: str, job_id: str, x_api_key: Optional[str] = Header(None)):
+    _check_key(x_api_key)
+    index = queue.remove(session_id, job_id)
+    if index is None:
+        raise HTTPException(status_code=409, detail="job already started or not found; cannot remove")
+    return {"index": index}
+
+
+@app.post("/sessions/{session_id}/jobs/{job_id}/move")
+async def move_job(session_id: str, job_id: str, to_index: int, x_api_key: Optional[str] = Header(None)):
+    _check_key(x_api_key)
+    ok = queue.move(session_id, job_id, to_index)
+    if not ok:
+        raise HTTPException(status_code=404, detail="job not found in session")
+    return {"status": "moved"}
+
+
+@app.post("/sessions/{session_id}/clear")
+async def clear_session(session_id: str, x_api_key: Optional[str] = Header(None)):
+    _check_key(x_api_key)
+    queue.clear(session_id)
+    return {"status": "cleared"}
+
+
 @app.post("/queue/pause")
 async def pause_queue(x_api_key: Optional[str] = Header(None)):
     _check_key(x_api_key)
