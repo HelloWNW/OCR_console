@@ -222,7 +222,6 @@ class DvDEngine:
         _stage("before pretrained_seg_model forward")
         with torch.no_grad():
             mskx, d0, hx6, hx5d, hx4d, hx3d, hx2d, hx1d = pretrained_seg_model(source_288)
-        _stage("after pretrained_seg_model forward")
             hx6 = F.interpolate(hx6, size=64, mode="bilinear", align_corners=False)
             hx5d = F.interpolate(hx5d, size=64, mode="bilinear", align_corners=False)
             hx4d = F.interpolate(hx4d, size=64, mode="bilinear", align_corners=False)
@@ -230,6 +229,7 @@ class DvDEngine:
             hx2d = F.interpolate(hx2d, size=64, mode="bilinear", align_corners=False)
             hx1d = F.interpolate(hx1d, size=64, mode="bilinear", align_corners=False)
             seg_map_all = torch.cat((hx6, hx5d, hx4d, hx3d, hx2d, hx1d), dim=1)
+            _stage("after pretrained_seg_model forward")
 
             textline_map = None
             if settings.env.use_line_mask:
