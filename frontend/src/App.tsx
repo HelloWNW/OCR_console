@@ -16,7 +16,19 @@ import {
 type Mode = "camera" | "upload";
 type OutputFormat = "png" | "pdf";
 
-const sessionId = crypto.randomUUID();
+// Persisted so a page refresh reattaches to the same server-side queue
+// instead of silently orphaning it under a new, unreachable session id -
+// the queue is only meant to go away when the user hits Clear.
+function loadSessionId(): string {
+  const key = "dvd_session_id";
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  localStorage.setItem(key, id);
+  return id;
+}
+
+const sessionId = loadSessionId();
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("upload");
@@ -356,7 +368,10 @@ export default function App() {
           {[...queue].reverse().map((j) => {
             const thumb = thumbs.current[j.job_id];
             const openable = j.status === "done" && !!thumb;
-            const retakeable = mode === "camera" && j.status === "queued";
+            // Retake needs the original photo bytes, which only live in this
+            // tab's memory - a page refresh wipes them even though the job
+            // itself survives server-side, so skip offering retake then.
+            const retakeable = mode === "camera" && j.status === "queued" && !!blobs.current[j.job_id];
             return (
               <div
                 key={j.job_id}
