@@ -365,13 +365,6 @@ body {
   cursor: default;
 }
 
-.queue-item.retakeable {
-  border-color: var(--accent-dim);
-}
-
-.queue-item.retakeable:hover {
-  border-color: var(--accent);
-}
 
 .strip {
   display: flex;
@@ -450,7 +443,15 @@ body {
   border-color: #ff6b6b;
 }
 
-.cancel {
+.queue-item-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.cancel,
+.retake {
   background: none;
   border: none;
   color: var(--text-dim);
@@ -458,6 +459,11 @@ body {
   padding: 0;
   line-height: 1;
   font-size: 12px;
+}
+
+.retake {
+  color: var(--accent);
+  font-size: 13px;
 }
 
 .output-bar {

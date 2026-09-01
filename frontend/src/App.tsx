@@ -353,20 +353,16 @@ export default function App() {
         </div>
         <div className="strip">
           {queue.length === 0 && <p className="empty-hint">No photos yet.</p>}
-          {queue.map((j) => {
+          {[...queue].reverse().map((j) => {
             const thumb = thumbs.current[j.job_id];
             const openable = j.status === "done" && !!thumb;
             const retakeable = mode === "camera" && j.status === "queued";
             return (
               <div
                 key={j.job_id}
-                className={`queue-item status-${j.status} ${retakeable ? "retakeable" : ""}`}
-                onClick={() => {
-                  if (openable) setActiveResultId(j.job_id);
-                  else if (retakeable) retakeFromQueue(j.job_id, j.filename);
-                }}
-                style={{ cursor: openable || retakeable ? "pointer" : "default" }}
-                title={retakeable ? "Tap to retake this photo" : undefined}
+                className={`queue-item status-${j.status}`}
+                onClick={() => openable && setActiveResultId(j.job_id)}
+                style={{ cursor: openable ? "pointer" : "default" }}
               >
                 <div className="thumb">
                   {thumb ? (
@@ -379,17 +375,31 @@ export default function App() {
                 </div>
                 <div className="queue-item-row">
                   <span className="filename">{j.filename}</span>
-                  {j.status === "queued" && (
-                    <button
-                      className="cancel"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cancelJob(sessionId, j.job_id).then(refreshQueue);
-                      }}
-                    >
-                      ×
-                    </button>
-                  )}
+                  <div className="queue-item-buttons">
+                    {retakeable && (
+                      <button
+                        className="retake"
+                        title="Retake this photo"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          retakeFromQueue(j.job_id, j.filename);
+                        }}
+                      >
+                        ↺
+                      </button>
+                    )}
+                    {j.status === "queued" && (
+                      <button
+                        className="cancel"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cancelJob(sessionId, j.job_id).then(refreshQueue);
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <span className="status">{j.status}</span>
               </div>
