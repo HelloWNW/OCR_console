@@ -65,20 +65,20 @@ class JobQueue:
         return False
 
     def remove(self, session_id: str, job_id: str) -> Optional[int]:
-        """Pull a not-yet-started job out of its session entirely, for
-        retaking. Returns the index it was removed from (so the caller can
-        reinsert a replacement at the same spot), or None if the job isn't
-        queued anymore - already processing/done can't be safely un-submitted.
+        """Pull a job out of its session entirely, for retaking - queued,
+        done, or errored all work, since none of those are actively running.
+        Returns the index it was removed from (so the caller can reinsert a
+        replacement at the same spot), or None if the job is still
+        processing (can't safely un-submit mid-inference) or not found.
         """
         job = self.jobs.get(job_id)
-        if not job or job.session_id != session_id or job.status != JobStatus.QUEUED:
+        if not job or job.session_id != session_id or job.status == JobStatus.PROCESSING:
             return None
         ids = self.sessions.get(session_id, [])
         if job_id not in ids:
             return None
         index = ids.index(job_id)
         ids.pop(index)
-        job.status = JobStatus.CANCELED
         del self.jobs[job_id]
         return index
 

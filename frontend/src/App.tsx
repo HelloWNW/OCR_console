@@ -170,10 +170,12 @@ export default function App() {
     }
   }
 
-  // Pulls a still-queued photo back out to retake it, replacing whatever's
-  // currently in preview (which is dropped, not auto-queued - the point of
-  // this action is to redo that queued shot instead). Remembers its queue
-  // position so the retaken shot goes back to the same spot, not the end.
+  // Pulls a photo back out of the queue to retake it - queued, done, or
+  // errored, doesn't matter, as long as it isn't actively processing right
+  // now. Replaces whatever's currently in preview (which is dropped, not
+  // auto-queued - the point of this action is to redo that shot instead).
+  // Remembers its queue position so the retaken shot goes back to the same
+  // spot, not the end.
   async function retakeFromQueue(jobId: string, filename: string) {
     try {
       const index = await removeQueuedJob(sessionId, jobId);
@@ -183,8 +185,11 @@ export default function App() {
         pendingCapture.current = { blob, filename, reinsertIndex: index };
         setQueueStatus("idle");
       }
+      const oldThumb = thumbs.current[jobId];
+      if (oldThumb) URL.revokeObjectURL(oldThumb);
       delete thumbs.current[jobId];
       delete blobs.current[jobId];
+      resultApplied.current.delete(jobId);
     } finally {
       refreshQueue();
     }
@@ -368,10 +373,15 @@ export default function App() {
           {[...queue].reverse().map((j) => {
             const thumb = thumbs.current[j.job_id];
             const openable = j.status === "done" && !!thumb;
-            // Retake needs the original photo bytes, which only live in this
-            // tab's memory - a page refresh wipes them even though the job
-            // itself survives server-side, so skip offering retake then.
-            const retakeable = mode === "camera" && j.status === "queued" && !!blobs.current[j.job_id];
+            // Retake works on anything not actively processing right now -
+            // queued, done, or errored. It needs the original photo bytes,
+            // which only live in this tab's memory: a page refresh wipes
+            // them even though the job itself survives server-side, so skip
+            // offering retake then.
+            const retakeable =
+              mode === "camera" &&
+              j.status !== "processing" &&
+              !!blobs.current[j.job_id];
             return (
               <div
                 key={j.job_id}
