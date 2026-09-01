@@ -40,6 +40,15 @@ _REPO_ID = "hanquansanren/DvD"
 _REG_MODEL_BILIN = register_model2((512, 512), "bilinear")
 
 
+def _stage(msg: str):
+    try:
+        alloc = torch.cuda.memory_allocated() / 1e9
+        reserved = torch.cuda.memory_reserved() / 1e9
+        print(f"[STAGE] {msg} | alloc={alloc:.2f}GB reserved={reserved:.2f}GB", flush=True)
+    except Exception as e:  # noqa: BLE001 - diagnostic only, never let logging break inference
+        print(f"[STAGE] {msg} | (mem read failed: {e})", flush=True)
+
+
 def _coords_grid_tensor(shape):
     im_x, im_y = np.mgrid[0 : shape[0] - 1 : complex(shape[0]), 0 : shape[1] - 1 : complex(shape[1])]
     coords = np.stack((im_y, im_x), axis=2)
@@ -95,6 +104,7 @@ class DvDEngine:
         settings.severity = 0
         settings.corruption_number = 0
 
+        _stage("before create_model_and_diffusion")
         model, diffusion = create_model_and_diffusion(
             device="cuda",
             train_mode=settings.env.train_mode,
@@ -102,11 +112,13 @@ class DvDEngine:
             **args_to_dict(settings, model_and_diffusion_defaults().keys()),
         )
         setattr(diffusion, "settings", settings)
+        _stage("after create_model_and_diffusion (diffusion U-Net on GPU)")
 
         pretrained_dewarp_model = GeoTr_Seg_Inf()
         seg_model_path = hf_hub_download(repo_id=_REPO_ID, filename="seg.pth", token=self.hf_token)
         reload_segmodel(pretrained_dewarp_model.msk, seg_model_path)
         pretrained_dewarp_model.to("cuda").eval()
+        _stage("after pretrained_dewarp_model (GeoTr_Seg_Inf) to cuda")
 
         pretrained_line_seg_model = None
         pretrained_seg_model = None
@@ -118,16 +130,19 @@ class DvDEngine:
             line_ckpt = torch.load(line_seg_model_path, map_location="cpu")["model"]
             pretrained_line_seg_model.load_state_dict(line_ckpt, strict=True)
             pretrained_line_seg_model.to("cuda").eval()
+            _stage("after pretrained_line_seg_model (UNet) to cuda")
 
             new_seg_model_path = hf_hub_download(repo_id=_REPO_ID, filename="seg_model.pth", token=self.hf_token)
             seg_ckpt = torch.load(new_seg_model_path, map_location="cpu")["model"]
             pretrained_seg_model.load_state_dict(seg_ckpt, strict=True)
             pretrained_seg_model.to("cuda").eval()
+            _stage("after pretrained_seg_model (Seg) to cuda")
 
         model_path = hf_hub_download(repo_id=_REPO_ID, filename="model1852000.pt", token=self.hf_token)
         model_ckpt = torch.load(model_path, map_location="cpu")
         model.cpu().load_state_dict(model_ckpt, strict=False)
         model.to("cuda").eval()
+        _stage("after main diffusion model weights loaded to cuda")
 
         self._settings = settings
         self._model = model
@@ -187,7 +202,9 @@ class DvDEngine:
         source = input_image.to("cuda")
         source_256 = F.interpolate(input=source.float(), size=(256, 256), mode="area").to("cuda")
 
+        _stage("before VGGPyramid to cuda")
         pyramid = VGGPyramid(train=False).to("cuda")
+        _stage("after VGGPyramid to cuda")
         source_288 = F.interpolate(input_image, size=288, mode="bilinear", align_corners=True).to("cuda")
 
         if settings.env.time_variant:
@@ -195,13 +212,17 @@ class DvDEngine:
         else:
             init_feat = None
 
+        _stage("before pretrained_dewarp_model forward")
         with torch.inference_mode():
             ref_bm, mask_x = pretrained_dewarp_model(source_288)
+        _stage("after pretrained_dewarp_model forward")
 
         init_flow = torch.zeros((input_image.shape[0], 2, 64, 64), dtype=torch.float32).to("cuda")
 
+        _stage("before pretrained_seg_model forward")
         with torch.no_grad():
             mskx, d0, hx6, hx5d, hx4d, hx3d, hx2d, hx1d = pretrained_seg_model(source_288)
+        _stage("after pretrained_seg_model forward")
             hx6 = F.interpolate(hx6, size=64, mode="bilinear", align_corners=False)
             hx5d = F.interpolate(hx5d, size=64, mode="bilinear", align_corners=False)
             hx4d = F.interpolate(hx4d, size=64, mode="bilinear", align_corners=False)
@@ -212,14 +233,18 @@ class DvDEngine:
 
             textline_map = None
             if settings.env.use_line_mask:
+                _stage("before pretrained_line_seg_model forward")
                 textline_map, _ = pretrained_line_seg_model(mskx)
                 textline_map = F.interpolate(textline_map, size=64, mode="bilinear", align_corners=False)
+                _stage("after pretrained_line_seg_model forward")
 
         feature_size = 64
         c20 = None
         if not settings.env.train_VGG:
+            _stage("before VGG feature extraction")
             with torch.no_grad():
                 c20 = extract_raw_features_single2(pyramid, source, source_256, feature_size)
+            _stage("after VGG feature extraction")
 
         model_kwargs = {
             "init_flow": init_flow,
@@ -236,6 +261,7 @@ class DvDEngine:
         if settings.env.use_line_mask:
             model_kwargs["line_msk"] = textline_map
 
+        _stage("before diffusion.ddim_sample_loop")
         sample, _ = diffusion.ddim_sample_loop(
             model,
             (1, 2, feature_size, feature_size),
@@ -251,6 +277,7 @@ class DvDEngine:
             time_variant=settings.env.time_variant,
             pyramid=pyramid,
         )
+        _stage("after diffusion.ddim_sample_loop")
         sample = torch.clamp(sample, min=-1, max=1)
 
         sample = F.interpolate(sample, size=(h_ori, w_ori), mode="bilinear", align_corners=True)
@@ -259,6 +286,8 @@ class DvDEngine:
         )
         sample = (((sample + base.to(sample.device)) * 1) * 2 - 1) * 0.987
 
+        _stage("before final warp")
         warped_src = _REG_MODEL_BILIN([source_vis.to(sample.device).float(), sample])
         warped_src = warped_src[0].permute(1, 2, 0).detach().cpu().numpy()
+        _stage("after final warp - inference complete")
         return warped_src.astype(np.uint8)
