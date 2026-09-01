@@ -103,6 +103,12 @@ class DvDEngine:
         settings.name = "service"
         settings.severity = 0
         settings.corruption_number = 0
+        # Repo default is True and tries to save a debug PNG to a hardcoded
+        # 'vis_hp/debug_vis/' path that doesn't exist in this container -
+        # confirmed by a live failure: "[Errno 2] No such file or directory:
+        # 'vis_hp/debug_vis/dewarped_f2.png'" after a fully successful
+        # inference run. We don't need the debug visualization for the API.
+        settings.env.visualize = False
 
         _stage("before create_model_and_diffusion")
         model, diffusion = create_model_and_diffusion(
