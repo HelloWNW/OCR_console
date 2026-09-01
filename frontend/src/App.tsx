@@ -24,11 +24,14 @@ export default function App() {
 
   // camera mode state
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [rotation, setRotation] = useState(0);
   const [cameraError, setCameraError] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // The most recently captured shot, tracked separately from React state so
+  // a fast second capture can't race the first one's submit in flight.
+  const pendingCapture = useRef<{ blob: Blob; filename: string } | null>(null);
+  const [queueStatus, setQueueStatus] = useState<"idle" | "queuing" | "queued" | "error">("idle");
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultError, setResultError] = useState(false);
@@ -69,11 +72,16 @@ export default function App() {
     };
   }, [mode]);
 
-  // Takes a shot and queues it immediately; the shutter stays available for the next shot.
+  // Takes a shot and queues it immediately; the shutter stays available for
+  // the next shot. Uses a fresh canvas per capture (not a shared ref) so a
+  // fast second shot can't clear the first one's pixels out from under it -
+  // setting canvas.width/height resets its contents synchronously, so two
+  // overlapping captures sharing one canvas could otherwise both end up
+  // reading the second frame, or lose the first entirely.
   async function takePhoto() {
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || !video.videoWidth) return;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext("2d")!.drawImage(video, 0, 0);
@@ -83,9 +91,28 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     setPreviewUrl(url);
     const filename = `capture-${Date.now()}.png`;
-    const job = await submitJob(sessionId, blob, filename);
-    thumbs.current[job.job_id] = url;
-    refreshQueue();
+    pendingCapture.current = { blob, filename };
+    setQueueStatus("idle");
+    await queueCurrentCapture();
+  }
+
+  // Submits whatever's currently in pendingCapture. Called automatically
+  // right after each shot, and also exposed as the "Queue" button so a
+  // failed or skipped auto-submit (or a deliberate single-shot workflow)
+  // always has an explicit, visible way to actually get the photo queued.
+  async function queueCurrentCapture() {
+    const capture = pendingCapture.current;
+    if (!capture) return;
+    setQueueStatus("queuing");
+    try {
+      const job = await submitJob(sessionId, capture.blob, capture.filename);
+      thumbs.current[job.job_id] = URL.createObjectURL(capture.blob);
+      pendingCapture.current = null;
+      setQueueStatus("queued");
+      refreshQueue();
+    } catch {
+      setQueueStatus("error");
+    }
   }
 
   // Fetch the actual processed result for the open dialog - the queue-strip
@@ -187,7 +214,6 @@ export default function App() {
         <div className="camera-layout">
           <div className="main-window">
             <video ref={videoRef} autoPlay playsInline muted style={{ transform: `rotate(${rotation}deg)` }} />
-            <canvas ref={canvasRef} hidden />
             {cameraError && (
               <div className="camera-error">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -211,7 +237,19 @@ export default function App() {
           <div className="preview-window">
             <h2>Preview</h2>
             {previewUrl ? (
-              <img src={previewUrl} alt="last capture" />
+              <>
+                <img src={previewUrl} alt="last capture" />
+                <button
+                  className={`btn ${queueStatus === "error" ? "btn-danger" : "btn-secondary"} queue-btn`}
+                  onClick={queueCurrentCapture}
+                  disabled={queueStatus === "queuing" || queueStatus === "queued"}
+                >
+                  {queueStatus === "queuing" && "Queuing…"}
+                  {queueStatus === "queued" && "Queued ✓"}
+                  {queueStatus === "error" && "Retry queue"}
+                  {queueStatus === "idle" && "Queue"}
+                </button>
+              </>
             ) : (
               <p className="empty-hint">Take a photo to preview it here.</p>
             )}

@@ -142,31 +142,49 @@ body {
   color: var(--text-dim);
 }
 
-.upload-controls {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 0.5rem;
-}
-
-.upload-controls .btn-secondary,
-.upload-controls .btn-ghost {
-  flex: 1;
+.btn {
   padding: 0.55rem 0;
   border-radius: var(--radius-sm);
   font-size: 13px;
   cursor: pointer;
 }
 
-.upload-controls .btn-secondary {
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-secondary {
   background: transparent;
   border: 1px solid var(--accent-dim);
   color: var(--text);
 }
 
-.upload-controls .btn-ghost {
+.btn-ghost {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-dim);
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid #c25b5b;
+  color: #e0a5a5;
+}
+
+.upload-controls {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.upload-controls .btn {
+  flex: 1;
+}
+
+.queue-btn {
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .camera-layout {
@@ -280,7 +298,8 @@ body {
   flex: 1;
   min-height: 0;
   width: 100%;
-  object-fit: cover;
+  height: 100%;
+  object-fit: contain;
   border-radius: var(--radius-sm);
 }
 
